@@ -23,6 +23,7 @@ import {
   getTranslatedFontVar,
   type TranslatedFontKey,
 } from "@/lib/fonts";
+import { LANGUAGES, type LanguageKey } from "@/lib/languages";
 
 const MODELS: { value: GeminiModel; label: string }[] = [
   { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (fast, recommended)" },
@@ -74,7 +75,29 @@ export function Sidebar() {
   const setSettings = useStore((s) => s.setSettings);
   const setApiKey = useStore((s) => s.setApiKey);
   const resetAll = useStore((s) => s.resetAll);
+  const status = useStore((s) => s.progress.status);
+  const hasTranslations = useStore((s) =>
+    s.subtitles.some((e) => e.translated && e.translated.length > 0),
+  );
+  const isRunning = status === "running";
   const [showKey, setShowKey] = useState(false);
+
+  const handleLanguageChange = (next: LanguageKey) => {
+    if (next === settings.targetLanguage) return;
+    if (isRunning) {
+      toast.error(
+        "Cannot change target language while a translation is running",
+      );
+      return;
+    }
+    if (hasTranslations) {
+      toast.warning(
+        "Existing translations were produced for the previous language. " +
+          "Use Retry / Start translation to retranslate them.",
+      );
+    }
+    setSettings({ targetLanguage: next });
+  };
 
   return (
     <aside className="flex h-full flex-col gap-5 overflow-y-auto p-5">
@@ -147,6 +170,34 @@ export function Sidebar() {
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="target-language">Target language</Label>
+        <Select
+          value={settings.targetLanguage}
+          onValueChange={(v) => handleLanguageChange(v as LanguageKey)}
+          disabled={isRunning}
+        >
+          <SelectTrigger id="target-language" className="w-full">
+            <SelectValue placeholder="Select target language" />
+          </SelectTrigger>
+          <SelectContent>
+            {LANGUAGES.map((l) => (
+              <SelectItem key={l.value} value={l.value}>
+                <span className="mr-2" aria-hidden>
+                  {l.flag}
+                </span>
+                {l.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          {isRunning
+            ? "Locked while a translation is running."
+            : "All future chunks will translate into this language."}
+        </p>
       </div>
 
       <div className="space-y-2">
