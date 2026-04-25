@@ -9,6 +9,7 @@ import {
   type TranslationMode,
 } from "@/lib/prompts";
 import type { GeminiModel } from "@/lib/gemini";
+import type { TranslatedFontKey } from "@/lib/fonts";
 
 export type TranslatorStatus =
   | "idle"
@@ -26,6 +27,7 @@ export type Settings = {
   delayMs: number;
   maxRetries: number;
   fileName: string;
+  translatedFont: TranslatedFontKey;
 };
 
 export type Progress = {
@@ -60,6 +62,7 @@ const DEFAULT_SETTINGS: Settings = {
   delayMs: 3000,
   maxRetries: 2,
   fileName: "",
+  translatedFont: "inter",
 };
 
 const DEFAULT_PROGRESS: Progress = {
@@ -136,7 +139,15 @@ export const useStore = create<Store>()(
         subtitles: s.subtitles,
         progress: s.progress,
       }),
-      version: 1,
+      version: 2,
+      migrate: (persisted: unknown, version: number) => {
+        if (!persisted || typeof persisted !== "object") return persisted;
+        const p = persisted as { settings?: Partial<Settings> };
+        if (version < 2 && p.settings && !("translatedFont" in p.settings)) {
+          p.settings = { ...p.settings, translatedFont: "inter" };
+        }
+        return p;
+      },
     },
   ),
 );
