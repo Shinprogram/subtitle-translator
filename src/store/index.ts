@@ -6,9 +6,12 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type { SubtitleEntry } from "@/lib/srt";
 import {
   DEFAULT_USER_PROMPT,
+  LEGACY_VIETNAMESE_DEFAULT_USER_PROMPT,
   type TranslationMode,
 } from "@/lib/prompts";
 import type { GeminiModel } from "@/lib/gemini";
+import type { TranslatedFontKey } from "@/lib/fonts";
+import { isLanguageKey, type LanguageKey } from "@/lib/languages";
 
 export type TranslatorStatus =
   | "idle"
@@ -26,6 +29,8 @@ export type Settings = {
   delayMs: number;
   maxRetries: number;
   fileName: string;
+  translatedFont: TranslatedFontKey;
+  targetLanguage: LanguageKey;
 };
 
 export type Progress = {
@@ -60,6 +65,8 @@ const DEFAULT_SETTINGS: Settings = {
   delayMs: 3000,
   maxRetries: 2,
   fileName: "",
+  translatedFont: "inter",
+  targetLanguage: "vi",
 };
 
 const DEFAULT_PROGRESS: Progress = {
@@ -136,7 +143,30 @@ export const useStore = create<Store>()(
         subtitles: s.subtitles,
         progress: s.progress,
       }),
-      version: 1,
+      version: 3,
+      migrate: (persisted: unknown, version: number) => {
+        if (!persisted || typeof persisted !== "object") return persisted;
+        const p = persisted as { settings?: Partial<Settings> };
+        if (!p.settings) return p;
+        // v1 → v2: introduce translatedFont
+        if (version < 2 && !("translatedFont" in p.settings)) {
+          p.settings = { ...p.settings, translatedFont: "inter" };
+        }
+        // v2 → v3: introduce targetLanguage and replace the old
+        // Vietnamese-locked default user prompt with the language-neutral one.
+        if (version < 3) {
+          if (
+            !("targetLanguage" in p.settings) ||
+            !isLanguageKey(p.settings.targetLanguage)
+          ) {
+            p.settings = { ...p.settings, targetLanguage: "vi" };
+          }
+          if (p.settings.userPrompt === LEGACY_VIETNAMESE_DEFAULT_USER_PROMPT) {
+            p.settings = { ...p.settings, userPrompt: DEFAULT_USER_PROMPT };
+          }
+        }
+        return p;
+      },
     },
   ),
 );

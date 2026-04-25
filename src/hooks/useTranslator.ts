@@ -87,6 +87,7 @@ export function useTranslator() {
               lines,
               mode: settings.mode,
               userPrompt: settings.userPrompt,
+              targetLanguage: settings.targetLanguage,
               model: settings.model,
               maxRetries: settings.maxRetries,
             }),

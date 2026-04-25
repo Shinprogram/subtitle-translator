@@ -1,5 +1,8 @@
 // Prompt templates and translation modes.
 
+import type { LanguageKey } from "@/lib/languages";
+import { LANGUAGE_HINTS, LANGUAGE_NAMES } from "@/lib/languages";
+
 export type TranslationMode = "romance" | "xianxia" | "comedy" | "auto";
 
 export const MODE_LABELS: Record<TranslationMode, string> = {
@@ -9,41 +12,70 @@ export const MODE_LABELS: Record<TranslationMode, string> = {
   auto: "Auto (context-aware)",
 };
 
+// Genre flavor only — kept language-neutral so it composes with any target
+// language. Per-language tone (politeness, pronouns, register) lives in
+// LANGUAGE_HINTS.
 export const MODE_HINTS: Record<TranslationMode, string> = {
   romance:
-    "Thể loại ngôn tình / lãng mạn. Giữ giọng văn tình cảm, bay bổng, dùng đại từ xưng hô phù hợp (chàng/nàng, anh/em).",
+    "Genre: romance / ngôn tình. Keep the emotional, intimate register; " +
+    "preserve emotional beats and pet names.",
   xianxia:
-    "Thể loại tu tiên / huyền huyễn. Giữ nguyên các thuật ngữ tu luyện đã phổ biến (Kim Đan, Nguyên Anh, linh khí, đan điền, đạo hữu, tiền bối, v.v.), giọng văn cổ trang.",
+    "Genre: xianxia / cultivation. Preserve established cultivation terms " +
+    "(Jindan/Kim Đan, Yuanying/Nguyên Anh, qi/linh khí, dantian/đan điền, " +
+    "daoist/đạo hữu, senior/tiền bối, etc.) using the conventions of the " +
+    "target language. Tone is classical / wuxia.",
   comedy:
-    "Thể loại hài hước / đời thường. Giữ nhịp nhanh, giữ punchline, có thể Việt hoá thoáng để giữ tính hài.",
-  auto: "Tự phát hiện ngữ cảnh và chọn giọng văn phù hợp nhất.",
+    "Genre: comedy / slice-of-life. Keep the rhythm fast, preserve punchlines, " +
+    "loosely localize idioms when needed to keep the joke working.",
+  auto:
+    "Auto-detect the genre from context and choose the most fitting register.",
 };
 
+// Language-neutral default user prompt. The actual target language is injected
+// by buildSystemPrompt via the dedicated language directive line, so the user
+// prompt no longer hardcodes "Vietnamese".
 export const DEFAULT_USER_PROMPT =
+  `Translate naturally and faithfully — preserve meaning over word-for-word literal mapping. ` +
+  `Keep proper nouns (names, places, brands) intact in their original form when there is no widely-accepted localized form. ` +
+  `Never merge or split lines — every input line must correspond to exactly one output line.`;
+
+// Previous default user prompt (Vietnamese-locked). Kept here so we can
+// migrate persisted state and replace it with the new neutral default.
+export const LEGACY_VIETNAMESE_DEFAULT_USER_PROMPT =
   `Dịch phụ đề sau sang tiếng Việt tự nhiên, sát nghĩa, dễ đọc. ` +
   `Giữ nguyên danh xưng riêng, tên người, địa danh. ` +
   `Tuyệt đối KHÔNG gộp hay tách dòng — mỗi dòng input phải tương ứng chính xác một dòng output.`;
 
 // Base system instruction enforces the contract:
+// - explicit target language directive
 // - line-by-line output
 // - N lines in => N lines out
 // - numeric markers preserved so we can re-align
-export function buildSystemPrompt(
-  userPrompt: string,
-  modeHint: string,
-  lineCount: number,
-): string {
+export function buildSystemPrompt(params: {
+  userPrompt: string;
+  modeHint: string;
+  lineCount: number;
+  targetLanguage: LanguageKey;
+}): string {
+  const { userPrompt, modeHint, lineCount, targetLanguage } = params;
+  const languageName = LANGUAGE_NAMES[targetLanguage];
+  const languageHint = LANGUAGE_HINTS[targetLanguage];
+
   return [
-    "Bạn là chuyên gia dịch phụ đề phim/truyện. Hướng dẫn:",
+    "You are a professional subtitle translator for film and TV.",
+    `Translate the following subtitles into ${languageName}.`,
+    `The output MUST be written entirely in ${languageName}; do not output any other language.`,
+    "",
     userPrompt.trim(),
     modeHint.trim(),
+    languageHint.trim(),
     "",
-    "QUY TẮC BẮT BUỘC:",
-    `- Input có đúng ${lineCount} dòng, đánh dấu ###N### ở đầu mỗi dòng (N là số thứ tự).`,
-    `- Output PHẢI có đúng ${lineCount} dòng, giữ nguyên marker ###N### ở đầu mỗi dòng tương ứng.`,
-    "- TUYỆT ĐỐI không được gộp, tách, xóa, thêm dòng. Không đổi thứ tự.",
-    "- Không thêm bất kỳ chú thích, tiêu đề, hay markdown nào ngoài các dòng dịch.",
-    "- Nếu một dòng rỗng hoặc không cần dịch (ví dụ ký tự âm thanh), vẫn phải xuất dòng tương ứng, có thể giữ nguyên.",
+    "STRICT RULES:",
+    `- Input contains exactly ${lineCount} lines, each prefixed with a marker of the form ###N### (N is the 1-based line number).`,
+    `- Output MUST contain exactly ${lineCount} lines, each preserving its corresponding ###N### marker at the start of the line.`,
+    "- Never merge, split, delete, add, or reorder lines.",
+    "- Do not output any commentary, headings, code fences, or markdown — only the translated lines.",
+    "- If a line is empty or non-translatable (e.g. a sound cue), still output the corresponding line; you may keep it as-is.",
   ].join("\n");
 }
 

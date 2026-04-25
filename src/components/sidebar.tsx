@@ -18,6 +18,12 @@ import { Separator } from "@/components/ui/separator";
 import { useStore } from "@/store";
 import { MODE_LABELS, type TranslationMode } from "@/lib/prompts";
 import type { GeminiModel } from "@/lib/gemini";
+import {
+  TRANSLATED_FONTS,
+  getTranslatedFontVar,
+  type TranslatedFontKey,
+} from "@/lib/fonts";
+import { LANGUAGES, type LanguageKey } from "@/lib/languages";
 
 const MODELS: { value: GeminiModel; label: string }[] = [
   { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (fast, recommended)" },
@@ -69,7 +75,29 @@ export function Sidebar() {
   const setSettings = useStore((s) => s.setSettings);
   const setApiKey = useStore((s) => s.setApiKey);
   const resetAll = useStore((s) => s.resetAll);
+  const status = useStore((s) => s.progress.status);
+  const hasTranslations = useStore((s) =>
+    s.subtitles.some((e) => e.translated && e.translated.length > 0),
+  );
+  const isRunning = status === "running";
   const [showKey, setShowKey] = useState(false);
+
+  const handleLanguageChange = (next: LanguageKey) => {
+    if (next === settings.targetLanguage) return;
+    if (isRunning) {
+      toast.error(
+        "Cannot change target language while a translation is running",
+      );
+      return;
+    }
+    if (hasTranslations) {
+      toast.warning(
+        "Existing translations were produced for the previous language. " +
+          "Use Retry / Start translation to retranslate them.",
+      );
+    }
+    setSettings({ targetLanguage: next });
+  };
 
   return (
     <aside className="flex h-full flex-col gap-5 overflow-y-auto p-5">
@@ -145,6 +173,34 @@ export function Sidebar() {
       </div>
 
       <div className="space-y-2">
+        <Label htmlFor="target-language">Target language</Label>
+        <Select
+          value={settings.targetLanguage}
+          onValueChange={(v) => handleLanguageChange(v as LanguageKey)}
+          disabled={isRunning}
+        >
+          <SelectTrigger id="target-language" className="w-full">
+            <SelectValue placeholder="Select target language" />
+          </SelectTrigger>
+          <SelectContent>
+            {LANGUAGES.map((l) => (
+              <SelectItem key={l.value} value={l.value}>
+                <span className="mr-2" aria-hidden>
+                  {l.flag}
+                </span>
+                {l.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          {isRunning
+            ? "Locked while a translation is running."
+            : "All future chunks will translate into this language."}
+        </p>
+      </div>
+
+      <div className="space-y-2">
         <Label htmlFor="mode">Translation mode</Label>
         <Select
           value={settings.mode}
@@ -172,6 +228,39 @@ export function Sidebar() {
           onChange={(e) => setSettings({ userPrompt: e.target.value })}
           placeholder="Tell the model how to translate..."
         />
+      </div>
+
+      <Separator />
+
+      <div className="space-y-2">
+        <Label htmlFor="translated-font">Translated font</Label>
+        <Select
+          value={settings.translatedFont}
+          onValueChange={(v) =>
+            setSettings({ translatedFont: v as TranslatedFontKey })
+          }
+        >
+          <SelectTrigger id="translated-font" className="w-full">
+            <SelectValue placeholder="Select font" />
+          </SelectTrigger>
+          <SelectContent>
+            {TRANSLATED_FONTS.map((f) => (
+              <SelectItem
+                key={f.value}
+                value={f.value}
+                style={{ fontFamily: f.cssVar }}
+              >
+                {f.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p
+          className="text-xs text-muted-foreground"
+          style={{ fontFamily: getTranslatedFontVar(settings.translatedFont) }}
+        >
+          Preview: Xin chào, hôm nay bạn thế nào?
+        </p>
       </div>
 
       <Separator />

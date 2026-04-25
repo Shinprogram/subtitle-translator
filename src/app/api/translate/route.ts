@@ -7,6 +7,7 @@ import {
   MODE_HINTS,
   type TranslationMode,
 } from "@/lib/prompts";
+import { isLanguageKey, type LanguageKey } from "@/lib/languages";
 
 export const runtime = "nodejs";
 // Translation chunks can take a while; give them room.
@@ -17,6 +18,7 @@ type TranslateRequestBody = {
   lines: string[];
   mode: TranslationMode;
   userPrompt: string;
+  targetLanguage: LanguageKey;
   model?: GeminiModel;
   temperature?: number;
   maxRetries?: number;
@@ -44,11 +46,15 @@ function validate(body: unknown): TranslateRequestBody | string {
   if (typeof b.userPrompt !== "string") {
     return "Invalid `userPrompt`";
   }
+  if (!isLanguageKey(b.targetLanguage)) {
+    return "Invalid or missing `targetLanguage`";
+  }
   return {
     apiKey: b.apiKey,
     lines: b.lines as string[],
     mode: b.mode,
     userPrompt: b.userPrompt,
+    targetLanguage: b.targetLanguage,
     model: (b.model as GeminiModel | undefined) ?? "gemini-2.5-flash",
     temperature: typeof b.temperature === "number" ? b.temperature : 0.3,
     maxRetries: typeof b.maxRetries === "number" ? b.maxRetries : 2,
@@ -77,14 +83,23 @@ export async function POST(request: NextRequest) {
     return errorResponse(400, "bad_request", parsed);
   }
 
-  const { apiKey, lines, mode, userPrompt, model, temperature, maxRetries } =
-    parsed;
+  const {
+    apiKey,
+    lines,
+    mode,
+    userPrompt,
+    targetLanguage,
+    model,
+    temperature,
+    maxRetries,
+  } = parsed;
 
-  const systemInstruction = buildSystemPrompt(
-    userPrompt || "",
-    MODE_HINTS[mode],
-    lines.length,
-  );
+  const systemInstruction = buildSystemPrompt({
+    userPrompt: userPrompt || "",
+    modeHint: MODE_HINTS[mode],
+    lineCount: lines.length,
+    targetLanguage,
+  });
   const userText = markChunk(lines);
 
   let lastError: unknown = null;
