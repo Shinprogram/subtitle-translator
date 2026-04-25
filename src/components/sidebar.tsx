@@ -18,6 +18,11 @@ import { Separator } from "@/components/ui/separator";
 import { useStore } from "@/store";
 import { MODE_LABELS, type TranslationMode } from "@/lib/prompts";
 import type { GeminiModel } from "@/lib/gemini";
+import {
+  TRANSLATED_FONTS,
+  getTranslatedFontVar,
+  type TranslatedFontKey,
+} from "@/lib/fonts";
 
 const MODELS: { value: GeminiModel; label: string }[] = [
   { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (fast, recommended)" },
@@ -172,6 +177,39 @@ export function Sidebar() {
           onChange={(e) => setSettings({ userPrompt: e.target.value })}
           placeholder="Tell the model how to translate..."
         />
+      </div>
+
+      <Separator />
+
+      <div className="space-y-2">
+        <Label htmlFor="translated-font">Translated font</Label>
+        <Select
+          value={settings.translatedFont}
+          onValueChange={(v) =>
+            setSettings({ translatedFont: v as TranslatedFontKey })
+          }
+        >
+          <SelectTrigger id="translated-font" className="w-full">
+            <SelectValue placeholder="Select font" />
+          </SelectTrigger>
+          <SelectContent>
+            {TRANSLATED_FONTS.map((f) => (
+              <SelectItem
+                key={f.value}
+                value={f.value}
+                style={{ fontFamily: f.cssVar }}
+              >
+                {f.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p
+          className="text-xs text-muted-foreground"
+          style={{ fontFamily: getTranslatedFontVar(settings.translatedFont) }}
+        >
+          Preview: Xin chào, hôm nay bạn thế nào?
+        </p>
       </div>
 
       <Separator />
