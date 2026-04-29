@@ -1,12 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { EyeIcon, EyeOffIcon, KeyIcon, Trash2Icon } from "lucide-react";
+import {
+  CloudIcon,
+  EyeIcon,
+  EyeOffIcon,
+  HardDriveIcon,
+  KeyIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { LocalAiPanel } from "@/components/local-ai-panel";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -18,7 +27,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { useStore } from "@/store";
+import { useStore, type ConnectionMode } from "@/store";
 import { MODE_LABELS, type TranslationMode } from "@/lib/prompts";
 import {
   MODEL_REGISTRY,
@@ -95,30 +104,19 @@ function NumberInput({
 export function Sidebar() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
-  const setApiKey = useStore((s) => s.setApiKey);
   const resetAll = useStore((s) => s.resetAll);
   const status = useStore((s) => s.progress.status);
-  const hasTranslations = useStore((s) =>
-    s.subtitles.some((e) => e.translated && e.translated.length > 0),
-  );
   const isRunning = status === "running";
-  const [showKey, setShowKey] = useState(false);
 
-  const handleLanguageChange = (next: LanguageKey) => {
-    if (next === settings.targetLanguage) return;
+  const isLocal = settings.connectionMode === "local";
+
+  const handleConnectionModeChange = (next: ConnectionMode) => {
+    if (next === settings.connectionMode) return;
     if (isRunning) {
-      toast.error(
-        "Cannot change target language while a translation is running",
-      );
+      toast.error("Cannot change connection mode while a translation is running");
       return;
     }
-    if (hasTranslations) {
-      toast.warning(
-        "Existing translations were produced for the previous language. " +
-          "Use Retry / Start translation to retranslate them.",
-      );
-    }
-    setSettings({ targetLanguage: next });
+    setSettings({ connectionMode: next });
   };
 
   return (
@@ -126,11 +124,140 @@ export function Sidebar() {
       <div>
         <h2 className="text-lg font-semibold">Settings</h2>
         <p className="text-sm text-muted-foreground">
-          Your API key never leaves your browser except when making a
-          translation request.
+          {isLocal
+            ? "Local mode: the browser talks to your localhost AI server directly."
+            : "Cloud mode: your Gemini API key never leaves your browser except when making a translation request."}
         </p>
       </div>
 
+      <div className="space-y-2">
+        <Label>Connection</Label>
+        <ConnectionModeToggle
+          mode={settings.connectionMode}
+          onChange={handleConnectionModeChange}
+          disabled={isRunning}
+        />
+        <p className="text-xs text-muted-foreground">
+          {isLocal
+            ? "Direct browser → localhost. No traffic to this app's server."
+            : "Routes through this app's /api/translate (Gemini / Gemma)."}
+        </p>
+      </div>
+
+      {isLocal ? <LocalAiPanel /> : <CloudCredentialsAndModel />}
+
+      <Separator />
+
+      <TranslationOptions />
+
+      <Separator />
+
+      <FontPanel />
+
+      <Separator />
+
+      <ChunkingPanel />
+
+      <Separator />
+
+      <Button
+        variant="destructive"
+        type="button"
+        onClick={() => {
+          resetAll();
+          toast.success("Cleared subtitles and progress");
+        }}
+        className="gap-2"
+      >
+        <Trash2Icon className="size-4" />
+        Clear subtitles & progress
+      </Button>
+    </aside>
+  );
+}
+
+function ConnectionModeToggle({
+  mode,
+  onChange,
+  disabled,
+}: {
+  mode: ConnectionMode;
+  onChange: (next: ConnectionMode) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Connection mode"
+      className="grid grid-cols-2 gap-1 rounded-md border bg-muted/40 p-1"
+    >
+      <ConnectionModeButton
+        mode="cloud"
+        active={mode === "cloud"}
+        onClick={() => onChange("cloud")}
+        disabled={disabled}
+        icon={<CloudIcon className="size-3.5" />}
+        label="Cloud"
+      />
+      <ConnectionModeButton
+        mode="local"
+        active={mode === "local"}
+        onClick={() => onChange("local")}
+        disabled={disabled}
+        icon={<HardDriveIcon className="size-3.5" />}
+        label="Local"
+      />
+    </div>
+  );
+}
+
+function ConnectionModeButton({
+  mode,
+  active,
+  onClick,
+  disabled,
+  icon,
+  label,
+}: {
+  mode: ConnectionMode;
+  active: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      data-mode={mode}
+      data-active={active ? "true" : "false"}
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "inline-flex items-center justify-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium transition-colors",
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground",
+        disabled && "cursor-not-allowed opacity-60",
+      )}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function CloudCredentialsAndModel() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  const setApiKey = useStore((s) => s.setApiKey);
+  const isRunning = useStore((s) => s.progress.status === "running");
+  const [showKey, setShowKey] = useState(false);
+
+  return (
+    <>
       <div className="space-y-2">
         <Label htmlFor="api-key" className="flex items-center gap-2">
           <KeyIcon className="size-4" /> Gemini API key
@@ -173,13 +300,12 @@ export function Sidebar() {
         </p>
       </div>
 
-      <Separator />
-
       <div className="space-y-2">
         <Label htmlFor="model">Model</Label>
         <Select
           value={settings.model}
           onValueChange={(v) => setSettings({ model: v as ModelId })}
+          disabled={isRunning}
         >
           <SelectTrigger id="model" className="w-full">
             <SelectValue placeholder="Select model" />
@@ -231,7 +357,37 @@ export function Sidebar() {
           />
         </div>
       </div>
+    </>
+  );
+}
 
+function TranslationOptions() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  const isRunning = useStore((s) => s.progress.status === "running");
+  const hasTranslations = useStore((s) =>
+    s.subtitles.some((e) => e.translated && e.translated.length > 0),
+  );
+
+  const handleLanguageChange = (next: LanguageKey) => {
+    if (next === settings.targetLanguage) return;
+    if (isRunning) {
+      toast.error(
+        "Cannot change target language while a translation is running",
+      );
+      return;
+    }
+    if (hasTranslations) {
+      toast.warning(
+        "Existing translations were produced for the previous language. " +
+          "Use Retry / Start translation to retranslate them.",
+      );
+    }
+    setSettings({ targetLanguage: next });
+  };
+
+  return (
+    <>
       <div className="space-y-2">
         <Label htmlFor="target-language">Target language</Label>
         <Select
@@ -289,42 +445,54 @@ export function Sidebar() {
           placeholder="Tell the model how to translate..."
         />
       </div>
+    </>
+  );
+}
 
-      <Separator />
+function FontPanel() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
 
-      <div className="space-y-2">
-        <Label htmlFor="translated-font">Translated font</Label>
-        <Select
-          value={settings.translatedFont}
-          onValueChange={(v) =>
-            setSettings({ translatedFont: v as TranslatedFontKey })
-          }
-        >
-          <SelectTrigger id="translated-font" className="w-full">
-            <SelectValue placeholder="Select font" />
-          </SelectTrigger>
-          <SelectContent>
-            {TRANSLATED_FONTS.map((f) => (
-              <SelectItem
-                key={f.value}
-                value={f.value}
-                style={{ fontFamily: f.cssVar }}
-              >
-                {f.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p
-          className="text-xs text-muted-foreground"
-          style={{ fontFamily: getTranslatedFontVar(settings.translatedFont) }}
-        >
-          Preview: Xin chào, hôm nay bạn thế nào?
-        </p>
-      </div>
+  return (
+    <div className="space-y-2">
+      <Label htmlFor="translated-font">Translated font</Label>
+      <Select
+        value={settings.translatedFont}
+        onValueChange={(v) =>
+          setSettings({ translatedFont: v as TranslatedFontKey })
+        }
+      >
+        <SelectTrigger id="translated-font" className="w-full">
+          <SelectValue placeholder="Select font" />
+        </SelectTrigger>
+        <SelectContent>
+          {TRANSLATED_FONTS.map((f) => (
+            <SelectItem
+              key={f.value}
+              value={f.value}
+              style={{ fontFamily: f.cssVar }}
+            >
+              {f.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p
+        className="text-xs text-muted-foreground"
+        style={{ fontFamily: getTranslatedFontVar(settings.translatedFont) }}
+      >
+        Preview: Xin chào, hôm nay bạn thế nào?
+      </p>
+    </div>
+  );
+}
 
-      <Separator />
+function ChunkingPanel() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
 
+  return (
+    <>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
           <Label htmlFor="chunk-size">Chunk size</Label>
@@ -361,21 +529,6 @@ export function Sidebar() {
           onChange={(n) => setSettings({ maxRetries: n })}
         />
       </div>
-
-      <Separator />
-
-      <Button
-        variant="destructive"
-        type="button"
-        onClick={() => {
-          resetAll();
-          toast.success("Cleared subtitles and progress");
-        }}
-        className="gap-2"
-      >
-        <Trash2Icon className="size-4" />
-        Clear subtitles & progress
-      </Button>
-    </aside>
+    </>
   );
 }

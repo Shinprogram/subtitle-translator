@@ -14,8 +14,22 @@ import {
   isModelId,
   type ModelId,
 } from "@/lib/ai/translate";
+import {
+  LOCAL_DEFAULTS,
+  type LocalApiType,
+} from "@/lib/ai/local/types";
 import type { TranslatedFontKey } from "@/lib/fonts";
 import { isLanguageKey, type LanguageKey } from "@/lib/languages";
+
+export type ConnectionMode = "cloud" | "local";
+
+function isConnectionMode(v: unknown): v is ConnectionMode {
+  return v === "cloud" || v === "local";
+}
+
+function isLocalApiType(v: unknown): v is LocalApiType {
+  return v === "ollama" || v === "openai";
+}
 
 export type TranslatorStatus =
   | "idle"
@@ -42,6 +56,19 @@ export type Settings = {
    * affected chunks, which the user should opt into.
    */
   enableFailover: boolean;
+  /**
+   * Cloud (Gemini/Gemma via /api/translate) vs Local (browser → localhost
+   * AI server, no proxy). The five `local*` fields are only meaningful when
+   * `connectionMode === "local"`.
+   */
+  connectionMode: ConnectionMode;
+  localApiUrl: string;
+  localApiType: LocalApiType;
+  /** Free-form. No hardcoded list — must match what the local server reports. */
+  localModelName: string;
+  localTemperature: number;
+  /** 0 (or non-positive) = no cap, let the server use its default. */
+  localMaxTokens: number;
 };
 
 export type Progress = {
@@ -79,6 +106,12 @@ const DEFAULT_SETTINGS: Settings = {
   translatedFont: "inter",
   targetLanguage: "vi",
   enableFailover: false,
+  connectionMode: "cloud",
+  localApiUrl: LOCAL_DEFAULTS.apiUrl,
+  localApiType: LOCAL_DEFAULTS.apiType,
+  localModelName: LOCAL_DEFAULTS.modelName,
+  localTemperature: LOCAL_DEFAULTS.temperature,
+  localMaxTokens: LOCAL_DEFAULTS.maxTokens,
 };
 
 const DEFAULT_PROGRESS: Progress = {
@@ -155,7 +188,7 @@ export const useStore = create<Store>()(
         subtitles: s.subtitles,
         progress: s.progress,
       }),
-      version: 4,
+      version: 5,
       migrate: (persisted: unknown, version: number) => {
         if (!persisted || typeof persisted !== "object") return persisted;
         const p = persisted as { settings?: Partial<Settings> };
@@ -186,6 +219,37 @@ export const useStore = create<Store>()(
           }
           if (typeof p.settings.enableFailover !== "boolean") {
             p.settings = { ...p.settings, enableFailover: false };
+          }
+        }
+        // v4 → v5: introduce connectionMode + local-AI fields. Default to
+        // "cloud" so existing users keep their previous behavior unchanged.
+        if (version < 5) {
+          if (!isConnectionMode(p.settings.connectionMode)) {
+            p.settings = { ...p.settings, connectionMode: "cloud" };
+          }
+          if (typeof p.settings.localApiUrl !== "string") {
+            p.settings = { ...p.settings, localApiUrl: LOCAL_DEFAULTS.apiUrl };
+          }
+          if (!isLocalApiType(p.settings.localApiType)) {
+            p.settings = { ...p.settings, localApiType: LOCAL_DEFAULTS.apiType };
+          }
+          if (typeof p.settings.localModelName !== "string") {
+            p.settings = {
+              ...p.settings,
+              localModelName: LOCAL_DEFAULTS.modelName,
+            };
+          }
+          if (typeof p.settings.localTemperature !== "number") {
+            p.settings = {
+              ...p.settings,
+              localTemperature: LOCAL_DEFAULTS.temperature,
+            };
+          }
+          if (typeof p.settings.localMaxTokens !== "number") {
+            p.settings = {
+              ...p.settings,
+              localMaxTokens: LOCAL_DEFAULTS.maxTokens,
+            };
           }
         }
         return p;
