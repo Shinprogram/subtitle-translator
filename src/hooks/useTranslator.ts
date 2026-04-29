@@ -4,6 +4,11 @@ import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { chunkSubtitles } from "@/lib/srt";
 import { useStore } from "@/store";
+import {
+  getFailoverModel,
+  getModelDef,
+  isModelId,
+} from "@/lib/ai/translate";
 
 type ApiError = { error?: { kind?: string; message?: string } };
 
@@ -79,6 +84,9 @@ export function useTranslator() {
         abortRef.current = ctrl;
 
         try {
+          const failoverModel = settings.enableFailover
+            ? getFailoverModel(settings.model)
+            : null;
           const res = await fetch("/api/translate", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -89,6 +97,7 @@ export function useTranslator() {
               userPrompt: settings.userPrompt,
               targetLanguage: settings.targetLanguage,
               model: settings.model,
+              failoverModel,
               maxRetries: settings.maxRetries,
             }),
             signal: ctrl.signal,
@@ -126,9 +135,22 @@ export function useTranslator() {
             continue;
           }
 
-          const data = (await res.json()) as { translated: string[] };
+          const data = (await res.json()) as {
+            translated: string[];
+            modelUsed?: string;
+            failedOver?: boolean;
+          };
           if (!Array.isArray(data.translated)) {
             throw new Error("Malformed response from server");
+          }
+
+          if (data.failedOver && data.modelUsed) {
+            const fallbackLabel = isModelId(data.modelUsed)
+              ? getModelDef(data.modelUsed).label
+              : data.modelUsed;
+            toast.warning(
+              `Chunk ${ci + 1}: primary model failed; translated with ${fallbackLabel} instead.`,
+            );
           }
 
           applyChunkTranslation(startAt, data.translated);

@@ -9,7 +9,11 @@ import {
   LEGACY_VIETNAMESE_DEFAULT_USER_PROMPT,
   type TranslationMode,
 } from "@/lib/prompts";
-import type { GeminiModel } from "@/lib/gemini";
+import {
+  DEFAULT_MODEL_ID,
+  isModelId,
+  type ModelId,
+} from "@/lib/ai/translate";
 import type { TranslatedFontKey } from "@/lib/fonts";
 import { isLanguageKey, type LanguageKey } from "@/lib/languages";
 
@@ -22,7 +26,7 @@ export type TranslatorStatus =
 
 export type Settings = {
   apiKey: string;
-  model: GeminiModel;
+  model: ModelId;
   mode: TranslationMode;
   userPrompt: string;
   chunkSize: number;
@@ -31,6 +35,13 @@ export type Settings = {
   fileName: string;
   translatedFont: TranslatedFontKey;
   targetLanguage: LanguageKey;
+  /**
+   * If true, the server will retry once with a sibling model on the *other*
+   * provider after the primary model exhausts its retries (non-auth errors
+   * only). Off by default — failover changes the model that translates the
+   * affected chunks, which the user should opt into.
+   */
+  enableFailover: boolean;
 };
 
 export type Progress = {
@@ -58,7 +69,7 @@ type Store = {
 
 const DEFAULT_SETTINGS: Settings = {
   apiKey: "",
-  model: "gemini-2.5-flash",
+  model: DEFAULT_MODEL_ID,
   mode: "auto",
   userPrompt: DEFAULT_USER_PROMPT,
   chunkSize: 40,
@@ -67,6 +78,7 @@ const DEFAULT_SETTINGS: Settings = {
   fileName: "",
   translatedFont: "inter",
   targetLanguage: "vi",
+  enableFailover: false,
 };
 
 const DEFAULT_PROGRESS: Progress = {
@@ -143,7 +155,7 @@ export const useStore = create<Store>()(
         subtitles: s.subtitles,
         progress: s.progress,
       }),
-      version: 3,
+      version: 4,
       migrate: (persisted: unknown, version: number) => {
         if (!persisted || typeof persisted !== "object") return persisted;
         const p = persisted as { settings?: Partial<Settings> };
@@ -163,6 +175,17 @@ export const useStore = create<Store>()(
           }
           if (p.settings.userPrompt === LEGACY_VIETNAMESE_DEFAULT_USER_PROMPT) {
             p.settings = { ...p.settings, userPrompt: DEFAULT_USER_PROMPT };
+          }
+        }
+        // v3 → v4: introduce enableFailover; coerce unknown model IDs back
+        // to the default so users on a stale (now-removed) Gemini ID don't
+        // hit a runtime validation error.
+        if (version < 4) {
+          if (!isModelId(p.settings.model)) {
+            p.settings = { ...p.settings, model: DEFAULT_MODEL_ID };
+          }
+          if (typeof p.settings.enableFailover !== "boolean") {
+            p.settings = { ...p.settings, enableFailover: false };
           }
         }
         return p;
