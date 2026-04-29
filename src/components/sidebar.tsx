@@ -10,14 +10,23 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { useStore } from "@/store";
 import { MODE_LABELS, type TranslationMode } from "@/lib/prompts";
-import type { GeminiModel } from "@/lib/gemini";
+import {
+  MODEL_REGISTRY,
+  getModelDef,
+  getFailoverModel,
+  type ModelId,
+  type ProviderId,
+} from "@/lib/ai/translate";
 import {
   TRANSLATED_FONTS,
   getTranslatedFontVar,
@@ -25,13 +34,26 @@ import {
 } from "@/lib/fonts";
 import { LANGUAGES, type LanguageKey } from "@/lib/languages";
 
-const MODELS: { value: GeminiModel; label: string }[] = [
-  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (fast, recommended)" },
-  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro (higher quality)" },
-  { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-  { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
-  { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
-];
+const PROVIDER_GROUP_LABELS: Record<ProviderId, string> = {
+  gemini: "Gemini (closed)",
+  gemma: "Gemma (open weights)",
+};
+
+// Group the registry by provider, preserving registry order within each group.
+const MODELS_BY_PROVIDER: Record<ProviderId, typeof MODEL_REGISTRY[number][]> =
+  MODEL_REGISTRY.reduce(
+    (acc, m) => {
+      (acc[m.provider] ??= []).push(m);
+      return acc;
+    },
+    {} as Record<ProviderId, typeof MODEL_REGISTRY[number][]>,
+  );
+
+const SPEED_BADGE_CLASS: Record<string, string> = {
+  Fast: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  Balanced: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  "High Quality": "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+};
 
 function NumberInput({
   id,
@@ -157,19 +179,57 @@ export function Sidebar() {
         <Label htmlFor="model">Model</Label>
         <Select
           value={settings.model}
-          onValueChange={(v) => setSettings({ model: v as GeminiModel })}
+          onValueChange={(v) => setSettings({ model: v as ModelId })}
         >
           <SelectTrigger id="model" className="w-full">
             <SelectValue placeholder="Select model" />
           </SelectTrigger>
           <SelectContent>
-            {MODELS.map((m) => (
-              <SelectItem key={m.value} value={m.value}>
-                {m.label}
-              </SelectItem>
+            {(Object.keys(MODELS_BY_PROVIDER) as ProviderId[]).map((p) => (
+              <SelectGroup key={p}>
+                <SelectLabel>{PROVIDER_GROUP_LABELS[p]}</SelectLabel>
+                {MODELS_BY_PROVIDER[p].map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    <span className="flex items-center gap-2">
+                      <span>{m.label}</span>
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${SPEED_BADGE_CLASS[m.speedTier]}`}
+                      >
+                        {m.speedTier}
+                      </span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             ))}
           </SelectContent>
         </Select>
+        <p className="text-xs text-muted-foreground">
+          {getModelDef(settings.model).description}
+        </p>
+        <div className="flex items-start justify-between gap-3 pt-1">
+          <div className="grid gap-0.5">
+            <Label
+              htmlFor="enable-failover"
+              className="text-xs font-normal"
+            >
+              Enable failover
+            </Label>
+            <p className="text-[11px] text-muted-foreground">
+              {getFailoverModel(settings.model)
+                ? `On non-auth failures, retry once with ${
+                    getModelDef(getFailoverModel(settings.model)!).label
+                  }.`
+                : "No sibling model available for this selection."}
+            </p>
+          </div>
+          <Switch
+            id="enable-failover"
+            checked={settings.enableFailover}
+            disabled={isRunning || !getFailoverModel(settings.model)}
+            onCheckedChange={(c) => setSettings({ enableFailover: c })}
+          />
+        </div>
       </div>
 
       <div className="space-y-2">
