@@ -203,13 +203,25 @@ export async function generate(
       "No model is loaded. Pick a .task file in the Browser AI panel first.",
     );
   }
-  if (inflightPromise) {
-    throw new BrowserRuntimeError(
-      "Another generation is already in progress.",
-    );
+  // Await any in-flight generation rather than throwing. The common case is
+  // the previous chunk was aborted (e.g. user paused) but MediaPipe is still
+  // generating in the background — refusing here would burn through the
+  // caller's retry budget while we wait for the runtime anyway. Use a loop
+  // so concurrent awaiters serialize: when the original promise resolves all
+  // awaiters wake, but only the first one to run will see `inflightPromise`
+  // null (the next iteration sets it again on its own generateResponse call),
+  // so the others loop around and wait on the new one.
+  while (inflightPromise) {
+    await inflightPromise.catch(() => {});
   }
   if (opts.signal?.aborted) {
     throw new DOMException("Aborted", "AbortError");
+  }
+  // Re-check the instance: unloadModel() may have run while we were waiting.
+  if (!currentInstance) {
+    throw new BrowserRuntimeError(
+      "Model was unloaded while waiting for the previous generation to finish.",
+    );
   }
 
   // Note: max tokens / temperature / topK can't be changed per-call without
