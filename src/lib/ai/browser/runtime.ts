@@ -37,7 +37,19 @@ type LlmInferenceLike = {
 
 let currentInstance: LlmInferenceLike | null = null;
 let currentMeta: BrowserModelMeta | null = null;
-let busy = false;
+/**
+ * The native `generateResponse()` Promise we are currently awaiting, or
+ * `null` if no generation is in flight. This is kept *separate* from the
+ * one returned to the caller so that aborting the caller's wait does not
+ * also clear `busy` while the underlying WASM/WebGPU work is still running.
+ *
+ * Invariants:
+ *   - `inflightPromise === null`  ⇒  no work is in flight, safe to start.
+ *   - `inflightPromise !== null`  ⇒  work is in flight; do NOT start another
+ *      `generateResponse()` and do NOT call `instance.close()` until it
+ *      settles. Otherwise we risk concurrent calls or use-after-close.
+ */
+let inflightPromise: Promise<string> | null = null;
 
 export class BrowserRuntimeError extends Error {
   constructor(
@@ -56,14 +68,21 @@ export function getCurrentModel(): BrowserModelMeta | null {
 
 /** True iff a model is loaded and idle (not currently generating). */
 export function isReady(): boolean {
-  return currentInstance !== null && !busy;
+  return currentInstance !== null && inflightPromise === null;
 }
 
+/**
+ * Unloads the current model. If a generation is in flight (e.g. the caller
+ * already aborted but MediaPipe hasn't finished), waits for it to settle
+ * before calling `instance.close()` to avoid a use-after-close in the WASM
+ * heap. The caller's wait can still be raced against an abort signal — but
+ * this function will not race the runtime.
+ */
 export async function unloadModel(): Promise<void> {
-  if (busy) {
-    throw new BrowserRuntimeError(
-      "Cannot unload while a generation is in progress. Cancel it first.",
-    );
+  if (inflightPromise) {
+    // Don't surface the result/error to our caller — they only care that
+    // the runtime has quiesced.
+    await inflightPromise.catch(() => {});
   }
   if (currentInstance) {
     try {
@@ -91,11 +110,8 @@ export type LoadOptions = {
  * resident at a time.
  */
 export async function loadModel(opts: LoadOptions): Promise<BrowserModelMeta> {
-  if (busy) {
-    throw new BrowserRuntimeError(
-      "Another generation is in progress. Cancel it before loading a new model.",
-    );
-  }
+  // unloadModel waits for any in-flight generation to settle before closing
+  // the previous instance, so we don't need a separate guard here.
   await unloadModel();
 
   const startTotal = performance.now();
@@ -169,9 +185,15 @@ export async function loadModel(opts: LoadOptions): Promise<BrowserModelMeta> {
 
 /**
  * Runs a single prompt through the loaded model. MediaPipe doesn't natively
- * support cancellation mid-generation, so an aborted signal is checked
- * before the call and the result is discarded if the signal trips while
- * waiting — but the model will still finish generating in the background.
+ * support cancellation mid-generation, so we cannot actually stop the WASM
+ * work once it has started. What we *can* do is:
+ *
+ *   1. Reject this call's awaiter promptly when the abort signal fires.
+ *   2. Keep `inflightPromise` set until the underlying `generateResponse()`
+ *      actually settles, so a fast caller cannot start another generation
+ *      or call `unloadModel()` while the runtime is still busy.
+ *
+ * The caller observes (1); the next caller / unloader observes (2).
  */
 export async function generate(
   opts: BrowserGenerateOptions,
@@ -181,7 +203,7 @@ export async function generate(
       "No model is loaded. Pick a .task file in the Browser AI panel first.",
     );
   }
-  if (busy) {
+  if (inflightPromise) {
     throw new BrowserRuntimeError(
       "Another generation is already in progress.",
     );
@@ -190,33 +212,43 @@ export async function generate(
     throw new DOMException("Aborted", "AbortError");
   }
 
-  busy = true;
-  try {
-    // Note: max tokens / temperature / topK can't be changed per-call without
-    // calling setOptions(), which would tear down the cache. We applied them
-    // at load time; per-call overrides are deferred until users actually
-    // need them.
-    const responsePromise = currentInstance.generateResponse(opts.prompt);
-    if (opts.signal) {
-      const result = await Promise.race([
-        responsePromise,
-        new Promise<never>((_, reject) => {
-          opts.signal!.addEventListener(
-            "abort",
-            () =>
-              reject(
-                new DOMException("Aborted before completion", "AbortError"),
-              ),
-            { once: true },
-          );
-        }),
-      ]);
-      return result;
-    }
-    return await responsePromise;
-  } finally {
-    busy = false;
+  // Note: max tokens / temperature / topK can't be changed per-call without
+  // calling setOptions(), which would tear down the cache. We applied them
+  // at load time; per-call overrides are deferred until users actually
+  // need them.
+  const responsePromise = currentInstance.generateResponse(opts.prompt);
+  // Reset `inflightPromise` only when the *underlying* work settles — not
+  // when this function returns, which may happen earlier on abort.
+  inflightPromise = responsePromise;
+  responsePromise
+    .catch(() => {
+      // Errors are surfaced to the caller below; here we only care about
+      // settlement so we can release the runtime.
+    })
+    .finally(() => {
+      // Guard against the (impossible-but-cheap) case where two generations
+      // managed to overlap; only clear if we are still pointing at this one.
+      if (inflightPromise === responsePromise) {
+        inflightPromise = null;
+      }
+    });
+
+  if (opts.signal) {
+    return await Promise.race([
+      responsePromise,
+      new Promise<never>((_, reject) => {
+        opts.signal!.addEventListener(
+          "abort",
+          () =>
+            reject(
+              new DOMException("Aborted before completion", "AbortError"),
+            ),
+          { once: true },
+        );
+      }),
+    ]);
   }
+  return await responsePromise;
 }
 
 async function readFileWithProgress(

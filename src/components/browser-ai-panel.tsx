@@ -381,7 +381,7 @@ export function BrowserAiPanel() {
             max={2}
             step={0.05}
             onChange={(n) => setSettings({ browserTemperature: n })}
-            disabled={loading || isRunning}
+            disabled={loading || isRunning || !!modelMeta}
           />
         </div>
         <div className="space-y-1.5">
@@ -395,7 +395,7 @@ export function BrowserAiPanel() {
             max={200}
             step={1}
             onChange={(n) => setSettings({ browserTopK: n })}
-            disabled={loading || isRunning}
+            disabled={loading || isRunning || !!modelMeta}
           />
         </div>
         <div className="space-y-1.5">
@@ -414,9 +414,10 @@ export function BrowserAiPanel() {
         </div>
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Max tokens is fixed once the model is loaded — it shapes the KV cache
-        allocation. Unload to change it.{" "}
-        {modelMeta ? null : `Default ${BROWSER_DEFAULTS.maxTokens}.`}
+        All three are fixed once the model is loaded — MediaPipe bakes them
+        into the inference graph at <code>createFromOptions()</code> time.
+        Unload to change them.{" "}
+        {modelMeta ? null : `Defaults: ${BROWSER_DEFAULTS.temperature} / ${BROWSER_DEFAULTS.topK} / ${BROWSER_DEFAULTS.maxTokens}.`}
       </p>
 
       <details className="text-xs">
