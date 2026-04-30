@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   CloudIcon,
+  CpuIcon,
   EyeIcon,
   EyeOffIcon,
   HardDriveIcon,
@@ -15,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { LocalAiPanel } from "@/components/local-ai-panel";
+import { BrowserAiPanel } from "@/components/browser-ai-panel";
 import { cn } from "@/lib/utils";
 import {
   Select,
@@ -108,7 +110,7 @@ export function Sidebar() {
   const status = useStore((s) => s.progress.status);
   const isRunning = status === "running";
 
-  const isLocal = settings.connectionMode === "local";
+  const mode = settings.connectionMode;
 
   const handleConnectionModeChange = (next: ConnectionMode) => {
     if (next === settings.connectionMode) return;
@@ -119,32 +121,43 @@ export function Sidebar() {
     setSettings({ connectionMode: next });
   };
 
+  const headerSubtitle =
+    mode === "local"
+      ? "Local mode: the browser talks to your localhost AI server directly."
+      : mode === "browser"
+        ? "Browser mode: a .task model runs on-device via WebGPU. Fully offline once loaded."
+        : "Cloud mode: your Gemini API key never leaves your browser except when making a translation request.";
+  const modeFootnote =
+    mode === "local"
+      ? "Direct browser → localhost. No traffic to this app's server."
+      : mode === "browser"
+        ? "On-device inference. WebGPU required (desktop Chrome/Edge)."
+        : "Routes through this app's /api/translate (Gemini / Gemma).";
+
   return (
     <aside className="flex h-full flex-col gap-5 overflow-y-auto p-5">
       <div>
         <h2 className="text-lg font-semibold">Settings</h2>
-        <p className="text-sm text-muted-foreground">
-          {isLocal
-            ? "Local mode: the browser talks to your localhost AI server directly."
-            : "Cloud mode: your Gemini API key never leaves your browser except when making a translation request."}
-        </p>
+        <p className="text-sm text-muted-foreground">{headerSubtitle}</p>
       </div>
 
       <div className="space-y-2">
         <Label>Connection</Label>
         <ConnectionModeToggle
-          mode={settings.connectionMode}
+          mode={mode}
           onChange={handleConnectionModeChange}
           disabled={isRunning}
         />
-        <p className="text-xs text-muted-foreground">
-          {isLocal
-            ? "Direct browser → localhost. No traffic to this app's server."
-            : "Routes through this app's /api/translate (Gemini / Gemma)."}
-        </p>
+        <p className="text-xs text-muted-foreground">{modeFootnote}</p>
       </div>
 
-      {isLocal ? <LocalAiPanel /> : <CloudCredentialsAndModel />}
+      {mode === "local" ? (
+        <LocalAiPanel />
+      ) : mode === "browser" ? (
+        <BrowserAiPanel />
+      ) : (
+        <CloudCredentialsAndModel />
+      )}
 
       <Separator />
 
@@ -189,7 +202,7 @@ function ConnectionModeToggle({
     <div
       role="radiogroup"
       aria-label="Connection mode"
-      className="grid grid-cols-2 gap-1 rounded-md border bg-muted/40 p-1"
+      className="grid grid-cols-3 gap-1 rounded-md border bg-muted/40 p-1"
     >
       <ConnectionModeButton
         mode="cloud"
@@ -206,6 +219,14 @@ function ConnectionModeToggle({
         disabled={disabled}
         icon={<HardDriveIcon className="size-3.5" />}
         label="Local"
+      />
+      <ConnectionModeButton
+        mode="browser"
+        active={mode === "browser"}
+        onClick={() => onChange("browser")}
+        disabled={disabled}
+        icon={<CpuIcon className="size-3.5" />}
+        label="Browser"
       />
     </div>
   );

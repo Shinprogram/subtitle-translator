@@ -1,21 +1,25 @@
 # Subtitle Translator
 
 Translate `.srt` subtitle files into any of five languages (English,
-Vietnamese, Chinese Simplified, Japanese, Korean) using either:
+Vietnamese, Chinese Simplified, Japanese, Korean) using one of three modes:
 
-- **Cloud AI** — Google Gemini and Gemma served by Google AI Studio, **or**
+- **Cloud AI** — Google Gemini and Gemma served by Google AI Studio,
 - **Local AI** — any local server you run yourself (Ollama, llama.cpp,
   LM Studio, KoboldCpp, vLLM, oobabooga, …) via direct browser → localhost
-  calls.
+  calls, **or**
+- **Browser AI** — a `.task` LLM model loaded directly into the page via
+  [MediaPipe GenAI Web](https://ai.google.dev/edge/mediapipe/solutions/genai/llm_inference/web_js).
+  Fully offline once loaded; no server, no localhost, no key.
 
 Built with **Next.js (App Router)**, **Tailwind CSS v4**, **shadcn/ui**, and
 **Zustand**.
 
 ## Highlights
 
-- 🔌 **Two connection modes** — toggle Cloud / Local in the sidebar. Local
-  mode bypasses this app's server entirely; the browser talks directly to
-  your local AI URL.
+- 🔌 **Three connection modes** — toggle Cloud / Local / Browser in the
+  sidebar. Local bypasses this app's server entirely; Browser runs the model
+  on-device with WebGPU. Cloud uses a thin proxy so your API key isn't in
+  query params.
 - 🔐 **Client-side credentials** — Gemini API keys live only in
   `localStorage` and are sent per-request. They are never stored on the
   server or written to the build.
@@ -164,6 +168,58 @@ Tips:
   network).
 - Lower `Max tokens` and increase `Delay (ms)` if your phone thermal-throttles.
 
+## Browser mode (in-page inference, no server at all)
+
+Pick **Browser** in the sidebar. The app loads a `.task` LLM model into the
+page via [`@mediapipe/tasks-genai`](https://www.npmjs.com/package/@mediapipe/tasks-genai)
+and runs every translation chunk on-device.
+
+### Requirements
+
+- **A desktop Chromium-based browser** with WebGPU enabled (Chrome 113+ /
+  Edge 113+ / Opera). The panel auto-detects this and shows a banner if
+  WebGPU isn't exposed.
+- **A `.task` LLM model** (typically 0.5–4 GB). The
+  [`litert-community` org on Hugging Face](https://huggingface.co/litert-community)
+  publishes Gemma 3n, Gemma 2 (2B/9B), and Phi-3.5 in this format. Look for
+  filenames ending `-int4.task` or `-int8.task`. CPU and GPU variants are
+  separate files.
+
+### Workflow
+
+1. **Pick** a `.task` file (File picker → file blob is read into memory; no
+   upload).
+2. **Wait** for `Reading file → Initializing runtime → Loading weights →
+   Ready` (the slow phase is loading weights into the GPU; expect 5–30
+   seconds for a 2B-class model).
+3. **Test** with the one-shot test button to confirm the model produces
+   sensible English. If it returns gibberish or only emits the prompt back,
+   the file is the wrong delegate variant or quantization isn't supported.
+4. **Upload your subtitle file and translate.**
+
+### Important caveats
+
+- **No persistence across reload.** Browsers can't safely persist file blobs
+  outside IndexedDB. The filename of the last-loaded model is remembered for
+  display, but you have to re-pick the file after every reload.
+- **Not for Termux / Android.** Mobile Chrome doesn't ship WebGPU stable; on
+  Android, use **Local mode** + Ollama in Termux instead.
+- **Smaller models hallucinate.** Translation quality with a 2B-class model
+  is notably below cloud Gemini. The marker-protocol validator still
+  enforces line counts, so failed chunks land on the retry list cleanly.
+- **One model in memory at a time.** Loading a new model unloads the
+  previous one to avoid OOM on consumer GPUs.
+
+### Architecture
+
+| Concern              | Where                                     |
+|----------------------|-------------------------------------------|
+| WebGPU detection     | `src/lib/ai/browser/types.ts → detectWebGpu()` |
+| Runtime singleton    | `src/lib/ai/browser/runtime.ts` (loadModel / generate / unloadModel) |
+| File picker + UI     | `src/components/browser-ai-panel.tsx`     |
+| Chunk dispatch       | `src/hooks/useTranslator.ts → runBrowserChunkWithRetries()` |
+| Persisted settings   | `src/store/index.ts` (`browser*` fields, persist v6) |
+
 ## Project layout
 
 ```
@@ -174,8 +230,9 @@ src/
 │  └─ page.tsx                 # App shell (sidebar + main)
 ├─ components/
 │  ├─ ui/                      # shadcn primitives
-│  ├─ sidebar.tsx              # Connection toggle + cloud/local panels
+│  ├─ sidebar.tsx              # Connection toggle + cloud/local/browser panels
 │  ├─ local-ai-panel.tsx       # Local AI config + Test connection
+│  ├─ browser-ai-panel.tsx     # In-browser .task model picker + status
 │  ├─ file-upload.tsx          # Drag-and-drop SRT upload
 │  ├─ subtitle-table.tsx       # Editable subtitle table
 │  ├─ translation-controls.tsx # Start/Pause/Resume/Retry/Export + progress
@@ -183,8 +240,9 @@ src/
 │  └─ theme-toggle.tsx
 ├─ hooks/
 │  └─ useTranslator.ts         # Batch translation controller
-│                              # — dispatches to /api/translate (cloud)
-│                              # — or directly to localhost (local)
+│                              # — dispatches to /api/translate (cloud),
+│                              # — directly to localhost (local), or
+│                              # — to the on-device runtime (browser)
 ├─ lib/
 │  ├─ srt.ts                   # Parser / serializer / chunker
 │  ├─ prompts.ts               # Mode hints + marker protocol
@@ -198,12 +256,15 @@ src/
 │     │  ├─ gemini.ts
 │     │  ├─ gemma.ts
 │     │  └─ google-shared.ts
-│     └─ local/                # CLIENT-side local providers
-│        ├─ types.ts
-│        ├─ ollama.ts
-│        ├─ openai.ts
-│        ├─ dispatch.ts
-│        └─ connection-test.ts
+│     ├─ local/                # CLIENT-side local providers
+│     │  ├─ types.ts
+│     │  ├─ ollama.ts
+│     │  ├─ openai.ts
+│     │  ├─ dispatch.ts
+│     │  └─ connection-test.ts
+│     └─ browser/              # CLIENT-side in-page MediaPipe runtime
+│        ├─ types.ts           # WebGPU detect, defaults, shared shapes
+│        └─ runtime.ts         # Singleton load / generate / unload
 └─ store/
    └─ index.ts                 # Zustand store with persist()
 ```

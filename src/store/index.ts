@@ -18,17 +18,25 @@ import {
   LOCAL_DEFAULTS,
   type LocalApiType,
 } from "@/lib/ai/local/types";
+import {
+  BROWSER_DEFAULTS,
+  type BrowserDelegate,
+} from "@/lib/ai/browser/types";
 import type { TranslatedFontKey } from "@/lib/fonts";
 import { isLanguageKey, type LanguageKey } from "@/lib/languages";
 
-export type ConnectionMode = "cloud" | "local";
+export type ConnectionMode = "cloud" | "local" | "browser";
 
 function isConnectionMode(v: unknown): v is ConnectionMode {
-  return v === "cloud" || v === "local";
+  return v === "cloud" || v === "local" || v === "browser";
 }
 
 function isLocalApiType(v: unknown): v is LocalApiType {
   return v === "ollama" || v === "openai";
+}
+
+function isBrowserDelegate(v: unknown): v is BrowserDelegate {
+  return v === "GPU" || v === "CPU";
 }
 
 export type TranslatorStatus =
@@ -69,6 +77,18 @@ export type Settings = {
   localTemperature: number;
   /** 0 (or non-positive) = no cap, let the server use its default. */
   localMaxTokens: number;
+  /**
+   * Browser mode (MediaPipe GenAI Web): runs a `.task` LLM file on-device
+   * via WebGPU. Fields below are persisted; the actual loaded model lives
+   * in the runtime singleton (not serializable) so the user always re-picks
+   * the file after a reload.
+   */
+  /** Display-only. Last `.task` filename loaded; cleared on Unload. */
+  browserModelFileName: string;
+  browserDelegate: BrowserDelegate;
+  browserMaxTokens: number;
+  browserTopK: number;
+  browserTemperature: number;
 };
 
 export type Progress = {
@@ -112,6 +132,11 @@ const DEFAULT_SETTINGS: Settings = {
   localModelName: LOCAL_DEFAULTS.modelName,
   localTemperature: LOCAL_DEFAULTS.temperature,
   localMaxTokens: LOCAL_DEFAULTS.maxTokens,
+  browserModelFileName: "",
+  browserDelegate: BROWSER_DEFAULTS.delegate,
+  browserMaxTokens: BROWSER_DEFAULTS.maxTokens,
+  browserTopK: BROWSER_DEFAULTS.topK,
+  browserTemperature: BROWSER_DEFAULTS.temperature,
 };
 
 const DEFAULT_PROGRESS: Progress = {
@@ -188,7 +213,7 @@ export const useStore = create<Store>()(
         subtitles: s.subtitles,
         progress: s.progress,
       }),
-      version: 5,
+      version: 6,
       migrate: (persisted: unknown, version: number) => {
         if (!persisted || typeof persisted !== "object") return persisted;
         const p = persisted as { settings?: Partial<Settings> };
@@ -249,6 +274,39 @@ export const useStore = create<Store>()(
             p.settings = {
               ...p.settings,
               localMaxTokens: LOCAL_DEFAULTS.maxTokens,
+            };
+          }
+        }
+        // v5 → v6: introduce browser (in-browser MediaPipe GenAI) fields.
+        // Defaults: no model selected, GPU delegate, sensible sampling.
+        // connectionMode stays whatever it was — existing local/cloud users
+        // are unaffected.
+        if (version < 6) {
+          if (typeof p.settings.browserModelFileName !== "string") {
+            p.settings = { ...p.settings, browserModelFileName: "" };
+          }
+          if (!isBrowserDelegate(p.settings.browserDelegate)) {
+            p.settings = {
+              ...p.settings,
+              browserDelegate: BROWSER_DEFAULTS.delegate,
+            };
+          }
+          if (typeof p.settings.browserMaxTokens !== "number") {
+            p.settings = {
+              ...p.settings,
+              browserMaxTokens: BROWSER_DEFAULTS.maxTokens,
+            };
+          }
+          if (typeof p.settings.browserTopK !== "number") {
+            p.settings = {
+              ...p.settings,
+              browserTopK: BROWSER_DEFAULTS.topK,
+            };
+          }
+          if (typeof p.settings.browserTemperature !== "number") {
+            p.settings = {
+              ...p.settings,
+              browserTemperature: BROWSER_DEFAULTS.temperature,
             };
           }
         }
