@@ -12,6 +12,10 @@ import {
 } from "@/lib/ai/translate";
 import { generateLocal } from "@/lib/ai/local/dispatch";
 import {
+  generate as runtimeGenerate,
+  getCurrentModel,
+} from "@/lib/ai/browser/runtime";
+import {
   buildSystemPrompt,
   markChunk,
   parseMarkedResponse,
@@ -61,10 +65,17 @@ export function useTranslator() {
       }
 
       const isLocal = settings.connectionMode === "local";
+      const isBrowser = settings.connectionMode === "browser";
 
       // Local mode has its own preflight requirements; cloud uses apiKey.
       if (isLocal && !settings.localModelName.trim()) {
         toast.error("Set a local model name in the sidebar (e.g. gemma3:4b).");
+        return;
+      }
+      if (isBrowser && !getCurrentModel()) {
+        toast.error(
+          "Load a .task model in the Browser AI panel before translating.",
+        );
         return;
       }
 
@@ -101,7 +112,13 @@ export function useTranslator() {
 
         try {
           let translated: string[];
-          if (isLocal) {
+          if (isBrowser) {
+            translated = await runBrowserChunkWithRetries({
+              lines,
+              settings,
+              signal: ctrl.signal,
+            });
+          } else if (isLocal) {
             translated = await runLocalChunkWithRetries({
               lines,
               settings,
@@ -318,6 +335,57 @@ async function runLocalChunkWithRetries(params: {
             ? e.detail.retryAfterMs
             : 500 * 2 ** attempt;
         await new Promise((r) => setTimeout(r, backoff));
+        continue;
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/**
+ * Browser-mode equivalent: runs a chunk through the in-page MediaPipe
+ * runtime. The system prompt and the user marker block are concatenated
+ * into a single combined prompt because `generateResponse()` doesn't
+ * separate roles.
+ *
+ * No native cancellation — `signal.aborted` is checked between attempts;
+ * a generation already in flight will run to completion in the background
+ * but its result is discarded.
+ */
+async function runBrowserChunkWithRetries(params: {
+  lines: string[];
+  settings: ReturnType<typeof useStore.getState>["settings"];
+  signal: AbortSignal;
+}): Promise<string[]> {
+  const { lines, settings, signal } = params;
+  const systemInstruction = buildSystemPrompt({
+    userPrompt: settings.userPrompt || "",
+    modeHint: MODE_HINTS[settings.mode],
+    lineCount: lines.length,
+    targetLanguage: settings.targetLanguage,
+  });
+  const userText = markChunk(lines);
+  const combinedPrompt = `${systemInstruction}\n\n--- BEGIN INPUT ---\n${userText}\n--- END INPUT ---`;
+
+  const maxRetries = Math.max(0, settings.maxRetries);
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (signal.aborted) throw new Error("aborted");
+    try {
+      const response = await runtimeGenerate({
+        prompt: combinedPrompt,
+        maxTokens: settings.browserMaxTokens,
+        topK: settings.browserTopK,
+        temperature: settings.browserTemperature,
+        signal,
+      });
+      return parseMarkedResponse(response, lines.length);
+    } catch (e) {
+      lastError = e;
+      if (signal.aborted) throw e;
+      if (attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
         continue;
       }
     }
